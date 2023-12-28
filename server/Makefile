@@ -7,7 +7,7 @@ aesdsocket.o: aesdsocket.c
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 aesdsocket: aesdsocket.o
-	$(CC) -o $@ $^ $(CFLAGS) 
+	$(CC) -o $@ $^ $(CFLAGS) -lpthread 
 
 .PHONY: clean
 
