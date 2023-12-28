@@ -22,6 +22,7 @@
 #define BUF_SIZE 1024
 #define LOG_FILE "/var/tmp/aesdsocketdata"
 
+void cleanup(int exit_code);
 void sig_handler(int signo);
 void *timestamp(void *arg);
 void *connection(void *arg);
@@ -154,34 +155,45 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
+void cleanup(int exit_code) {
+
+    syslog(LOG_INFO, "performing cleanup");
+    signal_exit = 1;
+
+    // Clean up threads
+    struct thread_info_t *thread;
+    while (!SLIST_EMPTY(&thread_list)) {
+        thread = SLIST_FIRST(&thread_list);
+        SLIST_REMOVE_HEAD(&thread_list, entries);
+        syslog(LOG_INFO, "cleanup - joining thread %ld", thread->thread_id);
+        if (pthread_join(thread->thread_id, NULL) != 0) {
+            syslog(LOG_ERR, "cleanup - error joining thread!");
+            exit(EXIT_FAILURE);
+        }
+        free(thread);
+    }
+
+    // Close open sockets
+    if (sockfd >= 0) close(sockfd);
+
+    // Close file descriptors
+    if (datafd >= 0) close(datafd);
+
+    // Delete the file
+    remove("/var/tmp/aesdsocketdata");
+
+    // Close syslog
+    closelog();
+
+    // Exit
+    exit(exit_code);
+}
+
+
 void sig_handler(int signo) {
    if (signo == SIGINT || signo == SIGTERM) {
        syslog(LOG_INFO, "Caught signal, exiting");
-       syslog(LOG_INFO, "performing cleanup");
-       signal_exit = 1;
-
-       struct thread_info_t *thread;
-       while (!SLIST_EMPTY(&thread_list)) {
-           thread = SLIST_FIRST(&thread_list);
-           SLIST_REMOVE_HEAD(&thread_list, entries);
-           syslog(LOG_INFO, "cleanup - joining thread %ld", thread->thread_id);
-           if (pthread_join(thread->thread_id, NULL) != 0) {
-               syslog(LOG_ERR, "cleanup - error joining thread!");
-               exit(EXIT_FAILURE);
-           }
-           free(thread);
-       }
-
-       if (sockfd >= 0) close(sockfd);
-
-       // Close file descriptors
-       if (datafd >= 0) close(datafd);
-
-       remove(LOG_FILE);
-
-       closelog();
-
-       exit(EXIT_SUCCESS);
+       cleanup(EXIT_SUCCESS);
    }
 }
 
