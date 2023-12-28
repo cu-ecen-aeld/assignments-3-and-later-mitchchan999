@@ -18,16 +18,13 @@
 #include "queue.h"
 
 
-// definations
 #define buffer_size 1024
 
-// declrations
 void cleanup(int exit_code);
 void sig_handler(int signo);
 void *timestamp(void *arg);
 void *connection(void *arg);
 
-// data type
 int sockfd, client_sockfd, datafd, signal_exit = 0;
 
 typedef struct client_info
@@ -52,48 +49,39 @@ int main(int argc, char *argv[]) {
     if (argc > 1 && strcmp(argv[1], "-d") == 0) {
 		pid_t pid, sid;
 
-		// Fork the process
 		pid = fork();
 
-		// Error with fork
 		if (pid < 0) {
 			syslog(LOG_ERR, "ERROR: Failed to fork");
 			cleanup(EXIT_FAILURE);
 		}
 
-		// stop parent with SUCCESS
 		if (pid != 0) {
 			exit(EXIT_SUCCESS);
 		}
 
-		// Create a new SID for child process
 		sid = setsid();
 		if (sid < 0) {
 			syslog(LOG_ERR, "ERROR: Failed to setsid");
 			cleanup(EXIT_FAILURE);
     	}
 
-		// Close out the standard file descriptors
 		close(STDIN_FILENO);
 		close(STDOUT_FILENO);
 		close(STDERR_FILENO);
     }
 
-    // Set up signal handlers
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
 
-    // Initialize thread list
     SLIST_INIT(&thread_list);
 
-    // Create a socket
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1) {
         syslog(LOG_ERR, "Failed to create socket");
         cleanup(EXIT_FAILURE);
     }
 
-    // Bind to port 9000
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -107,14 +95,12 @@ int main(int argc, char *argv[]) {
 
     close(-1);
     
-    // Listen for connections
     if (listen(sockfd, 5) == -1) {
         syslog(LOG_ERR, "ERROR: Failed to listen");
         close(sockfd);
         return -1;
     }
 
-    // Open file for aesdsocketdata
     char *aesddata_file = "/var/tmp/aesdsocketdata";
     datafd = open(aesddata_file, O_CREAT | O_RDWR | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     if (datafd == -1){
@@ -122,14 +108,12 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Dedicated thread to append timestamps
     pthread_t timestamp_thread;
     if (pthread_create(&timestamp_thread, NULL, timestamp, NULL) != 0) {
         syslog(LOG_ERR, "ERROR: Failed to create timestamp thread!");
         cleanup(EXIT_FAILURE);
     }
 
-    // Accept connections in a loop
     struct sockaddr_in client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
     
@@ -137,7 +121,6 @@ int main(int argc, char *argv[]) {
         client_sockfd = accept(sockfd, (struct sockaddr*)&client_addr, &client_addr_len);
         if (client_sockfd == -1) {
             syslog(LOG_WARNING, "Failed to accept connection");
-            // Continue accepting connections
             continue;
         }
 
@@ -147,14 +130,12 @@ int main(int argc, char *argv[]) {
             cleanup(EXIT_FAILURE);
         }
 
-        // Log accepted connection
         inet_ntop(AF_INET, &(client_addr.sin_addr), new_thread->client_data.client_ip, INET_ADDRSTRLEN);
         syslog(LOG_INFO, "Accepted connection from %s", new_thread->client_data.client_ip);
 
         new_thread->client_data.client_sockfd = client_sockfd;
         new_thread->notification = 0;
 
-        // Handle connection
         if (pthread_create(&new_thread->thread_id, NULL, connection, (void *)new_thread) != 0) {
             syslog(LOG_ERR, "ERROR: Failed to create thread!");
             cleanup(EXIT_FAILURE);
@@ -163,7 +144,6 @@ int main(int argc, char *argv[]) {
             SLIST_INSERT_HEAD(&thread_list, new_thread, entries);
         }
 
-        // Join complete threads
         struct thread_info_t *thread, *thread_tmp;
         SLIST_FOREACH_SAFE(thread, &thread_list, entries, thread_tmp) {
             if (thread->notification == 1) {
@@ -185,7 +165,6 @@ void cleanup(int exit_code) {
     syslog(LOG_INFO, "performing cleanup");
     signal_exit = 1;
 
-    // Clean up threads
     struct thread_info_t *thread;
     while (!SLIST_EMPTY(&thread_list)) {
         thread = SLIST_FIRST(&thread_list);
@@ -198,19 +177,14 @@ void cleanup(int exit_code) {
         free(thread);
     }
 
-    // Close open sockets
     if (sockfd >= 0) close(sockfd);
 
-    // Close file descriptors
     if (datafd >= 0) close(datafd);
 
-    // Delete the file
     remove("/var/tmp/aesdsocketdata");
 
-    // Close syslog
     closelog();
 
-    // Exit
     exit(exit_code);
 }
 
@@ -226,7 +200,6 @@ void *connection(void *arg)
     struct thread_info_t *thread_info = (struct thread_info_t *)arg;
     client_info_t client_data = thread_info->client_data;
 
-    // Receive and process data
     char* buffer = (char *)malloc(buffer_size * sizeof(char));
     if (buffer == NULL) {
         syslog(LOG_ERR, "ERROR: Failed to malloc");
@@ -236,7 +209,6 @@ void *connection(void *arg)
     ssize_t recv_size;
 
     while ((recv_size = recv(client_data.client_sockfd, buffer, buffer_size, 0)) > 0) {
-        // Append data to file ,Lock the mutex before writing
         if (pthread_mutex_lock(&aesddata_file_mutex) != 0) {
             syslog(LOG_ERR, "ERROR: Failed to acquire mutex!");
             cleanup(EXIT_FAILURE);
@@ -245,15 +217,12 @@ void *connection(void *arg)
             syslog(LOG_ERR, "ERROR: Failed to write to file");
             cleanup(EXIT_FAILURE);
         }
-        // Unlock the mutex after writing to the file
         if (pthread_mutex_unlock(&aesddata_file_mutex) != 0) {
             syslog(LOG_ERR, "ERROR: Failed to release mutex!");
             cleanup(EXIT_FAILURE);
         }
 
-        // Check for newline to consider the packet complete
         if (memchr(buffer, '\n', buffer_size) != NULL) {
-            // Reset file offset to the beginning of the file
             lseek(datafd, 0, SEEK_SET);
             int bytes_read = read(datafd, buffer, buffer_size);
             if (bytes_read == -1) {
@@ -270,7 +239,6 @@ void *connection(void *arg)
 
     free(buffer);
 
-    // Log closed connection
     syslog(LOG_INFO, "Closed connection from %s", client_data.client_ip);
     close(client_data.client_sockfd);
 
@@ -286,20 +254,17 @@ void *timestamp(void *arg) {
         char timestamp[100];
         strftime(timestamp, sizeof(timestamp), "timestamp: %a, %d %b %Y %H:%M:%S %z\n", time_info);
 
-        // Append timestamp to /var/tmp/aesdsocketdata
-        // Lock the mutex before writing to the file
         if (pthread_mutex_lock(&aesddata_file_mutex) != 0) {
             syslog(LOG_ERR, "ERROR: Failed to acquire mutex!");
             cleanup(EXIT_FAILURE);
         }
         write(datafd, timestamp, strlen(timestamp));
-        // Unlock the mutex after writing to the file
         if (pthread_mutex_unlock(&aesddata_file_mutex) != 0) {
             syslog(LOG_ERR, "ERROR: Failed to release mutex!");
             cleanup(EXIT_FAILURE);
         }
 
-        sleep(10); // Wait for 10 seconds before appending the next timestamp
+        sleep(10);
     }
 
     return NULL;
