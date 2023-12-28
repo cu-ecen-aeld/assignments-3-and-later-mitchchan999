@@ -4,10 +4,10 @@ CFLAGS=
 default: aesdsocket
 
 aesdsocket.o: aesdsocket.c 
-	$(CC) -c -o $@ $< $(CFLAGS)
+	$(CC) -c -o $@ $< $(CFLAGS) -lpthread
 
 aesdsocket: aesdsocket.o
-	$(CC) -o $@ $^ $(CFLAGS) -lpthread 
+	$(CC) -o $@ $^ $(CFLAGS) -lpthread
 
 .PHONY: clean
 
